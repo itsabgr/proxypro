@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package proxypro;
+option go_package = "./internal/proto";
+
+message Hunk {
+  bytes data = 1;
+}
+
+message MultiHunk {
+  repeated bytes data = 1;
+}
+
+service GRPC {
+  rpc Tun (stream Hunk) returns (stream Hunk);
+//  rpc TunMulti (stream MultiHunk) returns (stream MultiHunk);
+}
