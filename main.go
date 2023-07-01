@@ -15,8 +15,10 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"io"
+	"log"
 	"net"
 	"net/netip"
+	"runtime"
 	"time"
 	"unicode/utf8"
 )
@@ -113,21 +115,39 @@ func handleTrojan(ctx context.Context, peer io.ReadWriter) (err error) {
 func Pipe(ctx context.Context, a, b io.ReadWriter) error {
 	c := make(chan error, 2)
 	go func() {
+		buf := make([]byte, 1024)
 		for {
-			_, err := io.Copy(a, b)
+			n, err := a.Read(buf)
 			if err != nil {
 				c <- err
 				return
 			}
+			if n > 0 {
+				_, err = b.Write(buf[:n])
+				if err != nil {
+					c <- err
+					return
+				}
+			}
+			runtime.Gosched()
 		}
 	}()
 	go func() {
+		buf := make([]byte, 1024)
 		for {
-			_, err := io.Copy(b, a)
+			n, err := b.Read(buf)
 			if err != nil {
 				c <- err
 				return
 			}
+			if n > 0 {
+				_, err = a.Write(buf[:n])
+				if err != nil {
+					c <- err
+					return
+				}
+			}
+			runtime.Gosched()
 		}
 	}()
 	select {
@@ -153,6 +173,7 @@ func (s *service) Tun(inputStream proto.GRPC_TunServer) error {
 		return hunk.Data, nil
 	})
 	err := handleTrojan(inputStream.Context(), iobuf.NewDuplex(reader, writer))
+	log.Println(err)
 	return err
 }
 
