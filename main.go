@@ -8,8 +8,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	ws "github.com/gobwas/ws"
-	"github.com/gobwas/ws/wsutil"
 	"github.com/itsabgr/proxypro/internal/iobuf"
 	"github.com/itsabgr/proxypro/internal/proto"
 	"github.com/pion/dtls/v2/pkg/crypto/selfsign"
@@ -35,7 +33,7 @@ type service struct {
 	proto.UnimplementedGRPCServer
 }
 
-func ReadN[N constraints.Integer](reader io.Reader, n N) ([]byte, error) {
+func readN[N constraints.Integer](reader io.Reader, n N) ([]byte, error) {
 	b := make([]byte, n)
 	_, err := io.ReadFull(reader, b)
 	return b, err
@@ -44,7 +42,7 @@ func readAddr(typ byte, peer io.Reader) (addr string, err error) {
 	switch typ {
 	case 0x01:
 		var addr []byte
-		if addr, err = ReadN(peer, 4+2+2); err != nil {
+		if addr, err = readN(peer, 4+2+2); err != nil {
 			return "", err
 		}
 		port := binary.BigEndian.Uint16(addr[4:])
@@ -52,7 +50,7 @@ func readAddr(typ byte, peer io.Reader) (addr string, err error) {
 		return netip.AddrPortFrom(ipAddr, port).String(), nil
 	case 0x04:
 		var addr []byte
-		if addr, err = ReadN(peer, 16+2+2); err != nil {
+		if addr, err = readN(peer, 16+2+2); err != nil {
 			return "", err
 		}
 		port := binary.BigEndian.Uint16(addr[16:])
@@ -61,11 +59,11 @@ func readAddr(typ byte, peer io.Reader) (addr string, err error) {
 	case 0x03:
 		var addr []byte
 		var addrLen byte
-		if addr, err = ReadN(peer, 1); err != nil {
+		if addr, err = readN(peer, 1); err != nil {
 			return "", err
 		}
 		addrLen = addr[0]
-		if addr, err = ReadN(peer, addrLen+2+2); err != nil {
+		if addr, err = readN(peer, addrLen+2+2); err != nil {
 			return "", err
 		}
 		port := binary.BigEndian.Uint16(addr[addrLen:])
@@ -92,10 +90,10 @@ func handleTCP(ctx context.Context, peer io.ReadWriter, header [2]byte) (err err
 }
 
 func handleTrojan(ctx context.Context, peer io.ReadWriter) (err error) {
-	if _, err = ReadN(peer, 56); err != nil {
+	if _, err = readN(peer, 56); err != nil {
 		return err
 	}
-	if _, err = ReadN(peer, 2); err != nil {
+	if _, err = readN(peer, 2); err != nil {
 		return err
 	}
 	var header [2]byte
@@ -112,42 +110,52 @@ func handleTrojan(ctx context.Context, peer io.ReadWriter) (err error) {
 	}
 
 }
-
-func Pipe(parent context.Context, a, b io.ReadWriter) error {
-	ctx, cancel := context.WithCancel(parent)
-	defer cancel()
+func async(do func() error) <-chan error {
+	c := make(chan error)
 	go func() {
-		defer cancel()
-		_ = pipe(ctx, a, b, make([]byte, 1024))
+		c <- do()
 	}()
-	go func() {
-		defer cancel()
-		_ = pipe(ctx, b, a, make([]byte, 1024))
-	}()
-	<-ctx.Done()
-	return ctx.Err()
+	return c
+}
+func Pipe(ctx context.Context, a, b io.ReadWriter) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	select {
+	case err := <-async(func() error {
+		return pipe(ctx, a, b)
+	}):
+		return err
+	case err := <-async(func() error {
+		return pipe(ctx, b, a)
+	}):
+		return err
+	}
 }
 
-func pipe(ctx context.Context, dst io.Writer, src io.Reader, buf []byte) error {
+func pipe(ctx context.Context, dst io.Writer, src io.Reader) error {
+	buf := make([]byte, 1024)
 	for {
 		if ec := ctx.Err(); ec != nil {
 			return ec
 		}
 		nr, er := src.Read(buf)
+		if er != nil && er != io.EOF {
+			return er
+		}
 		if nr > 0 {
 			_, ew := dst.Write(buf[:nr])
 			if ew != nil {
 				return ew
 			}
 		}
-		if er != nil && er != io.EOF {
-			return er
-		}
 		runtime.Gosched()
 	}
 }
 
 func (s *service) TunMulti(inputStream proto.GRPC_TunMultiServer) error {
+	ctx, cancel := context.WithCancel(inputStream.Context())
+	defer cancel()
 	writer := iobuf.NewWriter(func(b []byte) (int, error) {
 		if err := inputStream.Send(&proto.MultiHunk{Data: [][]byte{b}}); err != nil {
 			return 0, err
@@ -161,10 +169,12 @@ func (s *service) TunMulti(inputStream proto.GRPC_TunMultiServer) error {
 		}
 		return hunk.Data, nil
 	})
-	err := handleTrojan(inputStream.Context(), iobuf.NewDuplex(reader, writer))
+	err := handleTrojan(ctx, iobuf.NewDuplex(ctx, reader, writer))
 	return err
 }
 func (s *service) Tun(inputStream proto.GRPC_TunServer) error {
+	ctx, cancel := context.WithCancel(inputStream.Context())
+	defer cancel()
 	writer := iobuf.NewWriter(func(b []byte) (int, error) {
 		if err := inputStream.Send(&proto.Hunk{Data: b}); err != nil {
 			return 0, err
@@ -178,7 +188,7 @@ func (s *service) Tun(inputStream proto.GRPC_TunServer) error {
 		}
 		return [][]byte{hunk.Data}, nil
 	})
-	err := handleTrojan(inputStream.Context(), iobuf.NewDuplex(reader, writer))
+	err := handleTrojan(inputStream.Context(), iobuf.NewDuplex(ctx, reader, writer))
 	return err
 }
 
@@ -195,33 +205,6 @@ func main() {
 	grpcServer := grpc.NewServer()
 	proto.RegisterGRPCServer(grpcServer, &service{})
 	panic(http.Serve(ln, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.URL.Path != "/ws" {
-			grpcServer.ServeHTTP(response, request)
-			return
-		}
-		conn, _, _, err := ws.UpgradeHTTP(request, response)
-		if err != nil {
-			response.WriteHeader(http.StatusBadRequest)
-			_, _ = io.WriteString(response, err.Error())
-			return
-		}
-		defer func() { _ = conn.Close() }()
-		handleWS(request.Context(), conn)
+		grpcServer.ServeHTTP(response, request)
 	})))
-}
-func handleWS(ctx context.Context, conn net.Conn) {
-	writer := iobuf.NewWriter(func(b []byte) (int, error) {
-		if err := wsutil.WriteServerBinary(conn, b); err != nil {
-			return 0, err
-		}
-		return len(b), nil
-	})
-	reader := iobuf.NewReader(func() ([][]byte, error) {
-		data, err := wsutil.ReadClientBinary(conn)
-		if err != nil {
-			return nil, err
-		}
-		return [][]byte{data}, nil
-	})
-	_ = handleTrojan(ctx, iobuf.NewDuplex(reader, writer))
 }
