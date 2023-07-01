@@ -115,37 +115,21 @@ func handleTrojan(ctx context.Context, peer io.ReadWriter) (err error) {
 func Pipe(ctx context.Context, a, b io.ReadWriter) error {
 	c := make(chan error, 2)
 	go func() {
-		buf := make([]byte, 10*1024)
+		buf := make([]byte, 5*1024)
 		for {
-			n, err := a.Read(buf)
-			if err != nil && err != io.EOF {
+			if _, err := copyBuffer(a, b, buf); err != nil {
 				c <- err
 				return
-			}
-			if n > 0 {
-				_, err = b.Write(buf[:n])
-				if err != nil {
-					c <- err
-					return
-				}
 			}
 			runtime.Gosched()
 		}
 	}()
 	go func() {
-		buf := make([]byte, 10*1024)
+		buf := make([]byte, 5*1024)
 		for {
-			n, err := b.Read(buf)
-			if err != nil && err != io.EOF {
+			if _, err := copyBuffer(b, a, buf); err != nil {
 				c <- err
 				return
-			}
-			if n > 0 {
-				_, err = a.Write(buf[:n])
-				if err != nil {
-					c <- err
-					return
-				}
 			}
 			runtime.Gosched()
 		}
@@ -156,6 +140,37 @@ func Pipe(ctx context.Context, a, b io.ReadWriter) error {
 	case err := <-c:
 		return err
 	}
+}
+
+func copyBuffer(dst io.Writer, src io.Reader, buf []byte) (written int64, err error) {
+	for {
+		nr, er := src.Read(buf)
+		if nr > 0 {
+			nw, ew := dst.Write(buf[0:nr])
+			if nw < 0 || nr < nw {
+				nw = 0
+				if ew == nil {
+					ew = errors.New("invalid write result")
+				}
+			}
+			written += int64(nw)
+			if ew != nil {
+				err = ew
+				break
+			}
+			if nr != nw {
+				err = io.ErrShortWrite
+				break
+			}
+		}
+		if er != nil {
+			if er != io.EOF {
+				err = er
+			}
+			break
+		}
+	}
+	return written, err
 }
 
 func (s *service) Tun(inputStream proto.GRPC_TunServer) error {
