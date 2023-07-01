@@ -13,9 +13,9 @@ import (
 	"github.com/pion/dtls/v2/pkg/crypto/selfsign"
 	"github.com/sagernet/sing/common/x/constraints"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
 	"io"
 	"net"
+	"net/http"
 	"net/netip"
 	"runtime"
 	"time"
@@ -188,9 +188,11 @@ func main() {
 		Certificates: []tls.Certificate{must(selfsign.GenerateSelfSigned())},
 		NextProtos:   []string{"h2"},
 	}
-	ln := must(net.Listen("tcp", *flagAddr))
+	ln := must(tls.Listen("tcp", *flagAddr, tlsConfig))
 	defer func() { _ = ln.Close() }()
-	server := grpc.NewServer(grpc.Creds(credentials.NewTLS(tlsConfig)))
-	proto.RegisterGRPCServer(server, &service{})
-	panic(server.Serve(ln))
+	grpcServer := grpc.NewServer()
+	proto.RegisterGRPCServer(grpcServer, &service{})
+	panic(http.Serve(ln, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		grpcServer.ServeHTTP(writer, request)
+	})))
 }
