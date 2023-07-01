@@ -15,7 +15,6 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"io"
-	"log"
 	"net"
 	"net/netip"
 	"time"
@@ -140,7 +139,6 @@ func Pipe(ctx context.Context, a, b io.ReadWriter) error {
 }
 
 func (s *service) Tun(inputStream proto.GRPC_TunServer) error {
-	log.Println("new")
 	writer := iobuf.NewWriter(func(b []byte) (int, error) {
 		if err := inputStream.Send(&proto.Hunk{Data: b}); err != nil {
 			return 0, err
@@ -155,7 +153,6 @@ func (s *service) Tun(inputStream proto.GRPC_TunServer) error {
 		return hunk.Data, nil
 	})
 	err := handleTrojan(inputStream.Context(), iobuf.NewDuplex(reader, writer))
-	log.Println("err", err)
 	return err
 }
 
