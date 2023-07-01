@@ -16,7 +16,6 @@ import (
 	"github.com/sagernet/sing/common/x/constraints"
 	"google.golang.org/grpc"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"net/netip"
@@ -202,7 +201,6 @@ func main() {
 		}
 		conn, _, _, err := ws.UpgradeHTTP(request, response)
 		if err != nil {
-			log.Println("failed to upgrade", err.Error())
 			response.WriteHeader(http.StatusBadRequest)
 			_, _ = io.WriteString(response, err.Error())
 			return
@@ -225,6 +223,5 @@ func handleWS(ctx context.Context, conn net.Conn) {
 		}
 		return [][]byte{data}, nil
 	})
-	err := handleTrojan(ctx, iobuf.NewDuplex(reader, writer))
-	log.Println("ws", err)
+	_ = handleTrojan(ctx, iobuf.NewDuplex(reader, writer))
 }
