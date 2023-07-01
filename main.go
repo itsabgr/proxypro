@@ -208,10 +208,10 @@ func main() {
 			return
 		}
 		defer func() { _ = conn.Close() }()
-		handleWS(conn)
+		handleWS(request.Context(), conn)
 	})))
 }
-func handleWS(conn net.Conn) {
+func handleWS(ctx context.Context, conn net.Conn) {
 	writer := iobuf.NewWriter(func(b []byte) (int, error) {
 		if err := wsutil.WriteServerBinary(conn, b); err != nil {
 			return 0, err
@@ -225,6 +225,6 @@ func handleWS(conn net.Conn) {
 		}
 		return [][]byte{data}, nil
 	})
-	err := handleTrojan(context.Background(), iobuf.NewDuplex(reader, writer))
+	err := handleTrojan(ctx, iobuf.NewDuplex(reader, writer))
 	log.Println("ws", err)
 }
