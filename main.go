@@ -115,7 +115,7 @@ func handleTrojan(ctx context.Context, peer io.ReadWriter) (err error) {
 func Pipe(ctx context.Context, a, b io.ReadWriter) error {
 	c := make(chan error, 2)
 	go func() {
-		buf := make([]byte, 5*1024)
+		buf := make([]byte, 1024)
 		for {
 			if _, err := copyBuffer(a, b, buf); err != nil {
 				c <- err
@@ -125,7 +125,7 @@ func Pipe(ctx context.Context, a, b io.ReadWriter) error {
 		}
 	}()
 	go func() {
-		buf := make([]byte, 5*1024)
+		buf := make([]byte, 1024)
 		for {
 			if _, err := copyBuffer(b, a, buf); err != nil {
 				c <- err
