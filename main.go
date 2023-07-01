@@ -8,12 +8,15 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	ws "github.com/gobwas/ws"
+	"github.com/gobwas/ws/wsutil"
 	"github.com/itsabgr/proxypro/internal/iobuf"
 	"github.com/itsabgr/proxypro/internal/proto"
 	"github.com/pion/dtls/v2/pkg/crypto/selfsign"
 	"github.com/sagernet/sing/common/x/constraints"
 	"google.golang.org/grpc"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/netip"
@@ -192,7 +195,36 @@ func main() {
 	defer func() { _ = ln.Close() }()
 	grpcServer := grpc.NewServer()
 	proto.RegisterGRPCServer(grpcServer, &service{})
-	panic(http.Serve(ln, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		grpcServer.ServeHTTP(writer, request)
+	panic(http.Serve(ln, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/ws" {
+			grpcServer.ServeHTTP(response, request)
+			return
+		}
+		conn, _, _, err := ws.UpgradeHTTP(request, response)
+		if err != nil {
+			log.Println("failed to upgrade", err.Error())
+			response.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(response, err.Error())
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		handleWS(conn)
 	})))
+}
+func handleWS(conn net.Conn) {
+	writer := iobuf.NewWriter(func(b []byte) (int, error) {
+		if err := wsutil.WriteServerBinary(conn, b); err != nil {
+			return 0, err
+		}
+		return len(b), nil
+	})
+	reader := iobuf.NewReader(func() ([][]byte, error) {
+		data, err := wsutil.ReadClientBinary(conn)
+		if err != nil {
+			return nil, err
+		}
+		return [][]byte{data}, nil
+	})
+	err := handleTrojan(context.Background(), iobuf.NewDuplex(reader, writer))
+	log.Println("ws", err)
 }
