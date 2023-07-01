@@ -15,7 +15,6 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"io"
-	"log"
 	"net"
 	"net/netip"
 	"runtime"
@@ -161,7 +160,6 @@ func (s *service) TunMulti(inputStream proto.GRPC_TunMultiServer) error {
 		return hunk.Data, nil
 	})
 	err := handleTrojan(inputStream.Context(), iobuf.NewDuplex(reader, writer))
-	log.Println(err)
 	return err
 }
 func (s *service) Tun(inputStream proto.GRPC_TunServer) error {
@@ -179,7 +177,6 @@ func (s *service) Tun(inputStream proto.GRPC_TunServer) error {
 		return [][]byte{hunk.Data}, nil
 	})
 	err := handleTrojan(inputStream.Context(), iobuf.NewDuplex(reader, writer))
-	log.Println(err)
 	return err
 }
 
