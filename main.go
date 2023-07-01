@@ -15,7 +15,6 @@ import (
 	"google.golang.org/grpc"
 	"io"
 	"net"
-	"net/http"
 	"net/netip"
 	"runtime"
 	"time"
@@ -204,7 +203,5 @@ func main() {
 	defer func() { _ = ln.Close() }()
 	grpcServer := grpc.NewServer()
 	proto.RegisterGRPCServer(grpcServer, &service{})
-	panic(http.Serve(ln, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		grpcServer.ServeHTTP(response, request)
-	})))
+	panic(grpcServer.Serve(ln))
 }
