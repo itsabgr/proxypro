@@ -121,7 +121,6 @@ func Pipe(ctx context.Context, a, b io.ReadWriter) error {
 				c <- err
 				return
 			}
-			runtime.Gosched()
 		}
 	}()
 	go func() {
@@ -131,7 +130,6 @@ func Pipe(ctx context.Context, a, b io.ReadWriter) error {
 				c <- err
 				return
 			}
-			runtime.Gosched()
 		}
 	}()
 	select {
@@ -144,6 +142,7 @@ func Pipe(ctx context.Context, a, b io.ReadWriter) error {
 
 func copyBuffer(dst io.Writer, src io.Reader, buf []byte) (written int64, err error) {
 	for {
+		runtime.Gosched()
 		nr, er := src.Read(buf)
 		if nr > 0 {
 			nw, ew := dst.Write(buf[0:nr])
