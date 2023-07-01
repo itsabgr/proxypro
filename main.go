@@ -118,7 +118,7 @@ func Pipe(ctx context.Context, a, b io.ReadWriter) error {
 		buf := make([]byte, 10*1024)
 		for {
 			n, err := a.Read(buf)
-			if err != nil {
+			if err != nil && err != io.EOF {
 				c <- err
 				return
 			}
@@ -136,7 +136,7 @@ func Pipe(ctx context.Context, a, b io.ReadWriter) error {
 		buf := make([]byte, 10*1024)
 		for {
 			n, err := b.Read(buf)
-			if err != nil {
+			if err != nil && err != io.EOF {
 				c <- err
 				return
 			}
