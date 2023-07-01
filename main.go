@@ -80,12 +80,28 @@ func handleTCP(ctx context.Context, peer io.ReadWriter, header [2]byte) (err err
 	if err != nil {
 		return err
 	}
-	conn, err := net.DialTimeout("tcp", addr, time.Second*5)
-	if err != nil {
-		return err
+	var conn net.Conn
+	switch header[1] {
+	case 0x01:
+		conn, err = net.DialTimeout("tcp4", addr, time.Second*5)
+		if err != nil {
+			return err
+		}
+	case 0x03:
+		conn, err = net.DialTimeout("tcp", addr, time.Second*5)
+		if err != nil {
+			return err
+		}
+	case 0x04:
+		conn, err = net.DialTimeout("tcp6", addr, time.Second*5)
+		if err != nil {
+			return err
+		}
+	default:
+		panic("unreachable")
 	}
 	defer func() { _ = conn.Close() }()
-	return Pipe(ctx, peer, conn)
+	return pipe(ctx, peer, conn)
 }
 
 func handleTrojan(ctx context.Context, peer io.ReadWriter) (err error) {
@@ -116,23 +132,23 @@ func async(do func() error) <-chan error {
 	}()
 	return c
 }
-func Pipe(ctx context.Context, a, b io.ReadWriter) error {
+func pipe(ctx context.Context, a, b io.ReadWriter) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	select {
 	case err := <-async(func() error {
-		return pipe(ctx, a, b)
+		return copyStreams(ctx, a, b)
 	}):
 		return err
 	case err := <-async(func() error {
-		return pipe(ctx, b, a)
+		return copyStreams(ctx, b, a)
 	}):
 		return err
 	}
 }
 
-func pipe(ctx context.Context, dst io.Writer, src io.Reader) error {
+func copyStreams(ctx context.Context, dst io.Writer, src io.Reader) error {
 	buf := make([]byte, 1024)
 	for {
 		if ec := ctx.Err(); ec != nil {
