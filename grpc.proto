@@ -13,5 +13,5 @@ message MultiHunk {
 
 service GRPC {
   rpc Tun (stream Hunk) returns (stream Hunk);
-//  rpc TunMulti (stream MultiHunk) returns (stream MultiHunk);
+  rpc TunMulti (stream MultiHunk) returns (stream MultiHunk);
 }

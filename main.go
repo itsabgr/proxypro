@@ -112,68 +112,58 @@ func handleTrojan(ctx context.Context, peer io.ReadWriter) (err error) {
 
 }
 
-func Pipe(ctx context.Context, a, b io.ReadWriter) error {
-	c := make(chan error, 2)
-	ctx, cancel := context.WithCancel(ctx)
+func Pipe(parent context.Context, a, b io.ReadWriter) error {
+	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	go func() {
-		buf := make([]byte, 1024)
-		for {
-			if _, err := copyBuffer(ctx, a, b, buf); err != nil {
-				c <- err
-				return
-			}
-		}
+		defer cancel()
+		_ = pipe(ctx, a, b, make([]byte, 1024))
 	}()
 	go func() {
-		buf := make([]byte, 1024)
-		for {
-			if _, err := copyBuffer(ctx, b, a, buf); err != nil {
-				c <- err
-				return
-			}
-		}
+		defer cancel()
+		_ = pipe(ctx, b, a, make([]byte, 1024))
 	}()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case err := <-c:
-		return err
-	}
+	<-ctx.Done()
+	return ctx.Err()
 }
 
-func copyBuffer(ctx context.Context, dst io.Writer, src io.Reader, buf []byte) (written int64, err error) {
-	for ctx.Err() == nil {
-		runtime.Gosched()
+func pipe(ctx context.Context, dst io.Writer, src io.Reader, buf []byte) error {
+	for {
+		if ec := ctx.Err(); ec != nil {
+			return ec
+		}
 		nr, er := src.Read(buf)
 		if nr > 0 {
-			nw, ew := dst.Write(buf[0:nr])
-			if nw < 0 || nr < nw {
-				nw = 0
-				if ew == nil {
-					ew = errors.New("invalid write result")
-				}
-			}
-			written += int64(nw)
+			_, ew := dst.Write(buf[:nr])
 			if ew != nil {
-				err = ew
-				break
-			}
-			if nr != nw {
-				err = io.ErrShortWrite
-				break
+				return ew
 			}
 		}
-		if er != nil {
-			if er != io.EOF {
-				err = er
-			}
-			break
+		if er != nil && er != io.EOF {
+			return er
 		}
+		runtime.Gosched()
 	}
-	return written, err
 }
 
+func (s *service) TunMulti(inputStream proto.GRPC_TunMultiServer) error {
+	writer := iobuf.NewWriter(func(b []byte) (int, error) {
+		if err := inputStream.Send(&proto.MultiHunk{Data: [][]byte{b}}); err != nil {
+			return 0, err
+		}
+		return len(b), nil
+	})
+	reader := iobuf.NewReader(func() ([][]byte, error) {
+		hunk, err := inputStream.Recv()
+		if err != nil {
+			return nil, err
+		}
+		return hunk.Data, nil
+	})
+	err := handleTrojan(inputStream.Context(), iobuf.NewDuplex(reader, writer))
+	log.Println(err)
+	return err
+}
 func (s *service) Tun(inputStream proto.GRPC_TunServer) error {
 	writer := iobuf.NewWriter(func(b []byte) (int, error) {
 		if err := inputStream.Send(&proto.Hunk{Data: b}); err != nil {
@@ -181,12 +171,12 @@ func (s *service) Tun(inputStream proto.GRPC_TunServer) error {
 		}
 		return len(b), nil
 	})
-	reader := iobuf.NewReader(func() ([]byte, error) {
+	reader := iobuf.NewReader(func() ([][]byte, error) {
 		hunk, err := inputStream.Recv()
 		if err != nil {
 			return nil, err
 		}
-		return hunk.Data, nil
+		return [][]byte{hunk.Data}, nil
 	})
 	err := handleTrojan(inputStream.Context(), iobuf.NewDuplex(reader, writer))
 	log.Println(err)
