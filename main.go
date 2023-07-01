@@ -114,10 +114,12 @@ func handleTrojan(ctx context.Context, peer io.ReadWriter) (err error) {
 
 func Pipe(ctx context.Context, a, b io.ReadWriter) error {
 	c := make(chan error, 2)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	go func() {
 		buf := make([]byte, 1024)
 		for {
-			if _, err := copyBuffer(a, b, buf); err != nil {
+			if _, err := copyBuffer(ctx, a, b, buf); err != nil {
 				c <- err
 				return
 			}
@@ -126,7 +128,7 @@ func Pipe(ctx context.Context, a, b io.ReadWriter) error {
 	go func() {
 		buf := make([]byte, 1024)
 		for {
-			if _, err := copyBuffer(b, a, buf); err != nil {
+			if _, err := copyBuffer(ctx, b, a, buf); err != nil {
 				c <- err
 				return
 			}
@@ -140,8 +142,8 @@ func Pipe(ctx context.Context, a, b io.ReadWriter) error {
 	}
 }
 
-func copyBuffer(dst io.Writer, src io.Reader, buf []byte) (written int64, err error) {
-	for {
+func copyBuffer(ctx context.Context, dst io.Writer, src io.Reader, buf []byte) (written int64, err error) {
+	for ctx.Err() == nil {
 		runtime.Gosched()
 		nr, er := src.Read(buf)
 		if nr > 0 {
